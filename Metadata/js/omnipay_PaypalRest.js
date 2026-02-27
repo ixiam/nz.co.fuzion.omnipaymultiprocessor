@@ -1,10 +1,18 @@
 // @see https://developer.paypal.com/docs/checkout/integrate/
 (function($) {
+  // Initialize CRM.payment.form for proper form handling
+  CRM.payment.getBillingForm();
+
   var form = $('#billing-payment-block').closest('form');
   var qfKey = $('[name=qfKey]', form).val();
 
   if (typeof CRM.vars.omnipay === 'undefined') {
     console.log('CRM.vars.omnipay not defined! Not a Omnipay processor?');
+    return;
+  }
+
+  if (typeof CRM.payment === 'undefined' || typeof CRM.payment.getTotalAmount !== 'function') {
+    console.error('CRM.payment.getTotalAmount is not available. Please ensure the mjwshared extension is installed and enabled.');
     return;
   }
 
@@ -35,7 +43,7 @@
 
           var frequencyInterval = $('#frequency_interval').val() || 1;
           var frequencyUnit = $('#frequency_unit').val() ? $('#frequency_interval').val() : CRM.vars.omnipay.frequency_unit;
-          var paymentAmount = calculateTotalFee();
+          var paymentAmount = CRM.payment.getTotalAmount();
           var isRecur = $('#is_recur').is(":checked");
           var recurText = isRecur ? ' recurring' : '';
 
@@ -79,9 +87,33 @@
           if (crmSubmitButtons) {
             crmSubmitButtons.style.display = 'block';
           }
-          document.getElementById('PayerID').value = data['payerID'];
-          document.getElementById('payment_token').value = paymentToken;
-          form.submit();
+
+          // Insert the token into the form so it gets submitted to the server
+          var tokenField = document.createElement('input');
+          tokenField.setAttribute('type', 'hidden');
+          tokenField.setAttribute('name', 'token');
+          tokenField.setAttribute('value', paymentToken);
+          CRM.payment.form.appendChild(tokenField);
+
+          // Insert the payerID into the form so it gets submitted to the server
+          var payerIDField = document.createElement('input');
+          payerIDField.setAttribute('type', 'hidden');
+          payerIDField.setAttribute('name', 'payerID');
+          payerIDField.setAttribute('value', data['payerID']);
+          CRM.payment.form.appendChild(payerIDField);
+
+          // For Drupal webforms, we need to add the 'op' field with the submit button value
+          // so webform knows which action to take (Next, Submit, etc.)
+          if (CRM.payment.getIsDrupalWebform()) {
+            CRM.payment.getBillingSubmit();
+            if (CRM.payment.submitButtons.length > 0) {
+              var submitButtonValue = CRM.payment.submitButtons[0].value;
+              CRM.payment.addDrupalWebformActionElement(submitButtonValue);
+            }
+          }
+
+          // Submit the form
+          CRM.payment.form.submit();
         },
 
         onError: function(err) {

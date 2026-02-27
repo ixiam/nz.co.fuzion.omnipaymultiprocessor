@@ -179,6 +179,20 @@ class CRM_Core_Payment_OmnipayMultiProcessor extends CRM_Core_Payment_PaymentExt
     $this->initialize($params);
     $this->saveBillingAddressIfRequired($params);
 
+    // Compatibility with Webform_civicrm.
+    if (empty($params['token'])) {
+      $token = CRM_Utils_Request::retrieve('payment_token', 'String');
+      if (!empty($token)) {
+        $params['token'] = $token;
+      }
+    }
+    if (empty($params['PayerID'])) {
+      $payerID = CRM_Utils_Request::retrieve('PayerID', 'String');
+      if (!empty($payerID)) {
+        $params['PayerID'] = $payerID;
+      }
+    }
+
     try {
       if (!empty($params['token'])) {
         $response = $this->doTokenPayment($params);
@@ -203,6 +217,20 @@ class CRM_Core_Payment_OmnipayMultiProcessor extends CRM_Core_Payment_PaymentExt
         }
         $params['trxn_id'] = $response->getTransactionReference();
         $params['payment_status_id'] = 1;
+        if (!empty($params['contributionID']) && $response->getTransactionReference()) {
+          try {
+            civicrm_api3('contribution', 'completetransaction', [
+              'id' => $params['contributionID'],
+              'trxn_id' => $response->getTransactionReference(),
+              'payment_processor_id' => $this->_paymentProcessor['id'],
+            ]);
+          }
+          catch (CRM_Core_Exception $e) {
+            if (stripos($e->getMessage(), 'Contribution already completed') === FALSE) {
+              \Civi::log()->warning('OmnipayMultiProcessor: completetransaction failed in doPayment: ' . $e->getMessage());
+            }
+          }
+        }
         // @todo fetch masked card, card type, card expiry from params. Eway def provides these.
         //gross_amount ? fee_amount?
         return $params;
@@ -343,6 +371,15 @@ class CRM_Core_Payment_OmnipayMultiProcessor extends CRM_Core_Payment_PaymentExt
       }
     }
     CRM_Core_Resources::singleton()->addVars('omnipay', $jsVariables);
+
+    // Assign to smarty so we can add via Variables.tpl for drupal webform and other situations where jsVars don't get loaded on the form.
+    // This applies to some contribution page configurations as well.
+    $form->assign('omnipayJSVars', $jsVariables);
+    CRM_Core_Region::instance('billing-block')->add([
+      'template' => E::path('templates/CRM/Core/Payment/Omnipay/Variables.tpl'),
+      'weight' => -10,
+    ]);
+
     if (is_array($regions)) {
       foreach ($regions as $region => $additions) {
         foreach ($additions as $addition) {
