@@ -3,17 +3,46 @@
   // Initialize CRM.payment.form for proper form handling
   CRM.payment.getBillingForm();
 
-  var form = $('#billing-payment-block').closest('form');
-  var qfKey = $('[name=qfKey]', form).val();
+  var scriptName = 'omnipayPaypal';
 
   if (typeof CRM.vars.omnipay === 'undefined') {
-    console.log('CRM.vars.omnipay not defined! Not a Omnipay processor?');
+    CRM.payment.debugging(scriptName, 'CRM.vars.omnipay not defined! Not a Omnipay processor?');
     return;
   }
 
-  if (typeof CRM.payment === 'undefined' || typeof CRM.payment.getTotalAmount !== 'function') {
-    console.error('CRM.payment.getTotalAmount is not available. Please ensure the mjwshared extension is installed and enabled.');
-    return;
+  console.log('Initializing PayPal REST integration');
+
+  function getSelectedPaymentProcessorId() {
+    // Drupal webform: payment processor field uses a different name
+    if (CRM.payment.getIsDrupalWebform()) {
+      var webformField = CRM.payment.form.querySelector('input[name="civicrm_1_contribution_1_contribution_payment_processor_id"]:checked');
+      if (webformField !== null) {
+        return parseInt(webformField.value);
+      }
+      // Only one processor on the webform (no radio buttons) – PayPal is the selected processor
+      return parseInt(CRM.vars.omnipay.paymentProcessorId);
+    }
+    // Standard CiviCRM form
+    if (CRM.payment && typeof CRM.payment.getPaymentProcessorSelectorValue === 'function') {
+      return CRM.payment.getPaymentProcessorSelectorValue();
+    }
+    var checkedProcessor = CRM.payment.form.querySelector('input[name="payment_processor_id"]:checked');
+    if (checkedProcessor !== null) {
+      return parseInt(checkedProcessor.value);
+    }
+    var selectProcessor = CRM.payment.form.querySelector('select[name="payment_processor_id"]');
+    if (selectProcessor !== null) {
+      return parseInt(selectProcessor.value);
+    }
+    return null;
+  }
+
+  function isPaypalSelected() {
+    var selectedProcessorId = getSelectedPaymentProcessorId();
+    if (selectedProcessorId === null) {
+      return true;
+    }
+    return selectedProcessorId === parseInt(CRM.vars.omnipay.paymentProcessorId);
   }
 
   function renderPaypal() {
@@ -21,17 +50,67 @@
 
 
         onInit: function(data, actions) {
+
+          // On webform, hide the submit button as it's triggered automatically
+          if (CRM.$('[type="submit"].webform-submit').length !== 0) {
+            $('[type="submit"].webform-submit').hide();
+          }
+
+          $('[type="submit"][formnovalidate="1"]',
+            '[type="submit"][formnovalidate="formnovalidate"]',
+            '[type="submit"].cancel',
+            '[type="submit"].webform-previous'
+          ).on('click', function() {
+            CRM.payment.debugging(scriptName, 'adding submitdontprocess: ' + this.id);
+            CRM.payment.form.dataset.submitdontprocess = 'true';
+          });
+
+          $(CRM.payment.getBillingSubmit()).on('click', function() {
+            CRM.payment.debugging(scriptName, 'clearing submitdontprocess');
+            CRM.payment.form.dataset.submitdontprocess = 'false';
+          });
+
+          $(CRM.payment.form).on(
+            'change',
+            'input[name="payment_processor_id"], select[name="payment_processor_id"], input[name="civicrm_1_contribution_1_contribution_payment_processor_id"]',
+            function() {
+              if (!isPaypalSelected()) {
+                CRM.payment.debugging(scriptName, 'processor changed away from paypal - clearing submit block');
+                CRM.payment.form.dataset.submitdontprocess = 'false';
+              }
+            }
+          );
+
+          $(CRM.payment.form).on('submit', function(event) {
+            if (!isPaypalSelected()) {
+              CRM.payment.form.dataset.submitdontprocess = 'false';
+              return true;
+            }
+            if (CRM.payment.form.dataset.submitdontprocess === 'true') {
+              CRM.payment.debugging(scriptName, 'non-payment submit detected - not submitting payment');
+              event.preventDefault();
+              return true;
+            }
+            if (document.getElementById('payment_token') && (document.getElementById('payment_token').value !== 'Authorisation token') &&
+                document.getElementById('PayerID') && (document.getElementById('PayerID').value !== 'Payer ID')) {
+              return true;
+            }
+            CRM.payment.debugging(scriptName, 'Unable to submit - paypal not executed');
+            event.preventDefault();
+            return true;
+          });
+
           // Set up the buttons.
-          if (form.valid()) {
+          if ($(CRM.payment.form).valid()) {
             actions.enable()
           }
           else {
             actions.disable();
           }
 
-          form.on('blur keyup change', 'input', function (event) {
-            if (form.valid()) {
-              actions.enable()
+          $(CRM.payment.form).on('blur keyup change', 'input', function (event) {
+            if ($(CRM.payment.form).valid()) {
+              actions.enable();
             }
             else {
               actions.disable();
@@ -41,23 +120,41 @@
 
         createBillingAgreement: function (data, actions) {
 
+          // CRM.payment.getTotalAmount is implemented by webform_civicrm and mjwshared. The plan is to
+          //   add CRM.payment.getTotalAmount() into CiviCRM core. This code allows it to work under any of
+          //   these circumstances as well as if CRM.payment does not exist.
+          var totalAmount = 0.0;
+          if ((typeof CRM.payment !== 'undefined') && (CRM.payment.hasOwnProperty('getTotalAmount'))) {
+            totalAmount = CRM.payment.getTotalAmount();
+          }
+          else if (typeof calculateTotalFee == 'function') {
+            // This is ONLY triggered in the following circumstances on a CiviCRM contribution page:
+            // - With a priceset that allows a 0 amount to be selected.
+            // - When we are the ONLY payment processor configured on the page.
+            totalAmount = parseFloat(calculateTotalFee());
+          }
+          else if (document.getElementById('total_amount')) {
+            // The input#total_amount field exists on backend contribution forms
+            totalAmount = parseFloat(document.getElementById('total_amount').value);
+          }
+
           var frequencyInterval = $('#frequency_interval').val() || 1;
           var frequencyUnit = $('#frequency_unit').val() ? $('#frequency_interval').val() : CRM.vars.omnipay.frequency_unit;
-          var paymentAmount = CRM.payment.getTotalAmount();
           var isRecur = $('#is_recur').is(":checked");
           var recurText = isRecur ? ' recurring' : '';
+          var qfKey = $('[name=qfKey]', $(CRM.payment.form)).val();
 
           return new Promise(function (resolve, reject) {
             CRM.api3('PaymentProcessor', 'preapprove', {
                 'payment_processor_id': CRM.vars.omnipay.paymentProcessorId,
-                'amount': paymentAmount,
+                'amount': totalAmount,
                 'currencyID' : CRM.vars.omnipay.currency,
                 'qf_key': qfKey,
                 'is_recur' : isRecur,
                 'installments' : $('#installments').val(),
                 'frequency_unit' : frequencyUnit,
                 'frequency_interval' : frequencyInterval,
-                'description' : CRM.vars.omnipay.title + ' ' + CRM.formatMoney(paymentAmount) + recurText,
+                'description' : CRM.vars.omnipay.title + ' ' + CRM.formatMoney(totalAmount) + recurText,
               }
             ).then(function (result) {
                 if (result['is_error'] === 1) {
@@ -76,9 +173,9 @@
 
         onApprove: function (data, actions) {
           var isRecur = 1;
-          var paymentToken = data['billingToken'];
+          var paymentToken = data.billingToken;
           if (!paymentToken) {
-            paymentToken = data['paymentID'];
+            paymentToken = data.paymentID;
             isRecur = 0;
           }
 
@@ -88,19 +185,8 @@
             crmSubmitButtons.style.display = 'block';
           }
 
-          // Insert the token into the form so it gets submitted to the server
-          var tokenField = document.createElement('input');
-          tokenField.setAttribute('type', 'hidden');
-          tokenField.setAttribute('name', 'token');
-          tokenField.setAttribute('value', paymentToken);
-          CRM.payment.form.appendChild(tokenField);
-
-          // Insert the payerID into the form so it gets submitted to the server
-          var payerIDField = document.createElement('input');
-          payerIDField.setAttribute('type', 'hidden');
-          payerIDField.setAttribute('name', 'payerID');
-          payerIDField.setAttribute('value', data['payerID']);
-          CRM.payment.form.appendChild(payerIDField);
+          document.getElementById('PayerID').value = data.payerID;
+          document.getElementById('payment_token').value = paymentToken;
 
           // For Drupal webforms, we need to add the 'op' field with the submit button value
           // so webform knows which action to take (Next, Submit, etc.)
@@ -117,7 +203,7 @@
         },
 
         onError: function(err) {
-          console.log(err);
+          CRM.payment.debugging(scriptName, err);
           alert('Site is not correctly configured to process payments');
         }
 

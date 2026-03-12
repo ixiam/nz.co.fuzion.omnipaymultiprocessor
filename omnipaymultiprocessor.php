@@ -91,3 +91,13 @@ function omnipaymultiprocessor_civicrm_preProcess($formName, $form) {
   }
 
 }
+
+/**
+ * Implements hook_civicrm_check().
+ *
+ * @throws \CRM_Core_Exception
+ */
+function omnipaymultiprocessor_civicrm_check(&$messages) {
+  $checks = new CRM_Omnipaymultiprocessor_Check($messages);
+  $messages = $checks->checkRequirements();
+}

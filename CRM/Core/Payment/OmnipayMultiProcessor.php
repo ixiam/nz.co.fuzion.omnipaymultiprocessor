@@ -179,18 +179,10 @@ class CRM_Core_Payment_OmnipayMultiProcessor extends CRM_Core_Payment_PaymentExt
     $this->initialize($params);
     $this->saveBillingAddressIfRequired($params);
 
-    // Compatibility with Webform_civicrm.
-    if (empty($params['token'])) {
-      $token = CRM_Utils_Request::retrieve('payment_token', 'String');
-      if (!empty($token)) {
-        $params['token'] = $token;
-      }
-    }
-    if (empty($params['PayerID'])) {
-      $payerID = CRM_Utils_Request::retrieve('PayerID', 'String');
-      if (!empty($payerID)) {
-        $params['PayerID'] = $payerID;
-      }
+    // "token" only gets set when coming in via a contribution page.
+    // Otherwise we need to set it from the actual parameter that's set on the form
+    if (!empty($params['payment_token']) && empty($params['token'])) {
+      $params['token'] = $params['payment_token'];
     }
 
     try {
@@ -370,11 +362,11 @@ class CRM_Core_Payment_OmnipayMultiProcessor extends CRM_Core_Payment_PaymentExt
         $jsVariables[$clientSideKey] = $this->_paymentProcessor[$key];
       }
     }
-    CRM_Core_Resources::singleton()->addVars('omnipay', $jsVariables);
-
-    // Assign to smarty so we can add via Variables.tpl for drupal webform and other situations where jsVars don't get loaded on the form.
+    \Civi::resources()->addVars('omnipay', $jsVariables);
+    // Assign to smarty so we can add via Card.tpl for drupal webform and other situations where jsVars don't get loaded on the form.
     // This applies to some contribution page configurations as well.
     $form->assign('omnipayJSVars', $jsVariables);
+
     CRM_Core_Region::instance('billing-block')->add([
       'template' => E::path('templates/CRM/Core/Payment/Omnipay/Variables.tpl'),
       'weight' => -10,
