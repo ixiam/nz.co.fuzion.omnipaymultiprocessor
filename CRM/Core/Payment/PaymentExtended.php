@@ -38,6 +38,10 @@ abstract class CRM_Core_Payment_PaymentExtended extends CRM_Core_Payment {
    */
   protected $_is_test = FALSE;
 
+  protected $guzzleClient = NULL;
+
+  protected $client = NULL;
+
   /**
    * Component - event or contribute
    * @var string
@@ -110,7 +114,6 @@ abstract class CRM_Core_Payment_PaymentExtended extends CRM_Core_Payment {
    * @param array $paymentProcessor
    */
   public function __construct($mode, &$paymentProcessor) {
-    $this->_mode = $mode;
     $this->_is_test = ($mode == 'live') ? FALSE : TRUE;
     $this->_paymentProcessor = $paymentProcessor;
   }
@@ -155,7 +158,7 @@ abstract class CRM_Core_Payment_PaymentExtended extends CRM_Core_Payment {
    *
    * @return void
    */
-  public function setReturnUrl(string $returnUrl = null) {
+  public function setReturnUrl(?string $returnUrl = null) {
     $this->returnUrl = $returnUrl;
   }
 
@@ -355,7 +358,7 @@ abstract class CRM_Core_Payment_PaymentExtended extends CRM_Core_Payment {
    * @param integer|null $contribution_id Contribution ID
    */
   protected function setContributionReference($contribution_id, $prefixAction = 'add') {
-    $prefix = $this->getPrefix();
+    $prefix = (string) $this->getPrefix();
     if ($contribution_id) {
       if ($prefixAction === 'strip') {
         $this->transaction_id = substr($contribution_id, strlen($prefix));
@@ -414,21 +417,32 @@ abstract class CRM_Core_Payment_PaymentExtended extends CRM_Core_Payment {
   /**
    * Unset various objects that will fail to serialize when the form is stored to session.
    *
+   * @param object $object (by reference)
+   * @param bool $isIncludeGateWay Should we also unset the gateway.
+   */
+  protected function cleanupObjectForSerialization(&$object, $isIncludeGateWay = FALSE) {
+    if (\Civi::settings()->get('omnipay_developer_mode') && !empty($object->history)) {
+      $object->logHttpTraffic(FALSE);
+    }
+    $object->history = [];
+    $object->client = NULL;
+    $object->lock = NULL;
+    $object->guzzleClient = NULL;
+    if ($isIncludeGateWay) {
+      $object->gateway = NULL;
+    }
+  }
+
+  /**
+   * Unset various objects that will fail to serialize when the form is stored to session.
+   *
    * @param bool $isIncludeGateWay
    *   Should we also unset the gateway.
    *   (possibly the default here should be TRUE but we want to be sure we are not
    *   unsetting it when it is still being used.)
+   *   For retro-compatibilty, this still transforms the current entity.
    */
   protected function cleanupClassForSerialization($isIncludeGateWay = FALSE) {
-    if (\Civi::settings()->get('omnipay_developer_mode') && !empty($this->history)) {
-      $this->logHttpTraffic(FALSE);
-    }
-    $this->history = [];
-    $this->client = NULL;
-    $this->lock = NULL;
-    $this->guzzleClient = NULL;
-    if ($isIncludeGateWay) {
-      $this->gateway = NULL;
-    }
+    $this->cleanupObjectForSerialization($this, $isIncludeGateWay);
   }
 }

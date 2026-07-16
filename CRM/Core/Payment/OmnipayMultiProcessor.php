@@ -26,15 +26,13 @@
 */
 
 use Civi\Core\Lock\LockInterface;
-use Omnipay\Omnipay;
-use Omnipay\Common\AbstractGateway;
-use Omnipay\Common\Exception\InvalidRequestException;
+use CiviOmniPay\Omnipay\Omnipay;
+use CiviOmniPay\Omnipay\Common\AbstractGateway;
 use CRM_Omnipaymultiprocessor_ExtensionUtil as E;
-use GuzzleHttp\Middleware;
-use GuzzleHttp\HandlerStack;
-use Omnipay\Common\Http\Client;
-use GuzzleHttp\Client as GuzzleClient;
-use Http\Adapter\Guzzle6\Client as HttpPlugClient;
+use CiviOmniPay\GuzzleHttp\Middleware;
+use CiviOmniPay\GuzzleHttp\HandlerStack;
+use CiviOmniPay\Omnipay\Common\Http\Client;
+use CiviOmniPay\Http\Adapter\Guzzle6\Client as HttpPlugClient;
 use Civi\Api4\Contribution;
 
 /**
@@ -84,6 +82,17 @@ class CRM_Core_Payment_OmnipayMultiProcessor extends CRM_Core_Payment_PaymentExt
   protected $propertyBag;
 
   /**
+   * For PHP8.1
+   * https://www.php.net/manual/en/language.oop5.magic.php#object.serialize
+   * @return array
+   */
+  public function __serialize(): array {
+    $data = (object) get_object_vars($this);
+    $this->cleanupObjectForSerialization($data, TRUE);
+    return (array) $data;
+  }
+
+  /**
    * Serialize, first removing gateway
    *
    * https://www.php.net/manual/en/class.serializable.php
@@ -91,8 +100,7 @@ class CRM_Core_Payment_OmnipayMultiProcessor extends CRM_Core_Payment_PaymentExt
    * @return string
    */
   public function serialize(): string {
-    $this->cleanupClassForSerialization(TRUE);
-    return serialize(get_object_vars($this));
+    return serialize($this->__serialize());
   }
 
   /**
@@ -104,8 +112,20 @@ class CRM_Core_Payment_OmnipayMultiProcessor extends CRM_Core_Payment_PaymentExt
    */
   public function unserialize($data) {
     $values = unserialize($data);
-    foreach ($values as $key => $value) {
-      $this->$key = $value;
+    $this->__unserialize($values);
+  }
+
+  /**
+   * For PHP8.1
+   * https://www.php.net/manual/en/language.oop5.magic.php#object.unserialize
+   *
+   * @param array $data
+   */
+  public function __unserialize(array $data): void {
+    foreach ($data as $key => $value) {
+      if (property_exists($this, $key)) {
+        $this->$key = $value;
+      }
     }
   }
 
@@ -597,8 +617,8 @@ class CRM_Core_Payment_OmnipayMultiProcessor extends CRM_Core_Payment_PaymentExt
       $cardFields[$cardField] = isset($params[$civicrmField]) ? $params[$civicrmField] : '';
     }
     if (!empty($params['credit_card_exp_date'])) {
-      $cardFields['expiryMonth'] = $params['credit_card_exp_date']['M'];
-      $cardFields['expiryYear'] = $params['credit_card_exp_date']['Y'];
+      $cardFields['expiryMonth'] = $params['month'];
+      $cardFields['expiryYear'] = $params['year'];
     }
     return $cardFields;
   }
@@ -1539,10 +1559,10 @@ class CRM_Core_Payment_OmnipayMultiProcessor extends CRM_Core_Payment_PaymentExt
    * @return false|string
    */
   protected function getCreditCardExpiry($params) {
-    if (empty($params['credit_card_exp_date'])) {
+    if (empty($params['year']) || empty($params['month'])) {
       return FALSE;
     }
-    return date("Y-m-t", strtotime($params['credit_card_exp_date']['Y'] . '-' . $params['credit_card_exp_date']['M']));
+    return date("Y-m-t", strtotime($params['year'] . '-' . $params['month']));
   }
 
   /**

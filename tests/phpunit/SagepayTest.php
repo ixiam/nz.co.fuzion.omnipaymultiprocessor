@@ -4,7 +4,7 @@ use Civi\Api4\Contact;
 use Civi\Test\HeadlessInterface;
 use Civi\Test\HookInterface;
 use Civi\Test\TransactionalInterface;
-use GuzzleHttp\Psr7\Response;
+use CiviOmniPay\GuzzleHttp\Psr7\Response;
 use PHPUnit\Framework\TestCase;
 use Civi\Test\Api3TestTrait;
 use Civi\Api4\ContributionRecur;
@@ -27,6 +27,12 @@ class SagepayTest extends TestCase implements HeadlessInterface, HookInterface, 
    */
   protected $paymentProcessorID;
 
+  private mixed $ids;
+
+  private mixed $_contribution;
+
+  private $_new;
+
   /**
    * @return \Civi\Test\CiviEnvBuilder
    * @throws \CRM_Extension_Exception_ParseException
@@ -42,7 +48,6 @@ class SagepayTest extends TestCase implements HeadlessInterface, HookInterface, 
   /**
    * Setup for test.
    *
-   * @throws \CRM_Core_Exception
    * @throws \CRM_Core_Exception
    */
   public function setUp():void {
